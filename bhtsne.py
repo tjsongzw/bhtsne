@@ -217,9 +217,68 @@ def run_bh_tsne(input_file, no_dims=2, perplexity=50, theta=0.5, randseed=-1, ve
         return np.asarray(res, dtype='float64')
 
 
+def prepare_data(data, workdir, no_dims=2, perplexity=50,
+                 theta=0.5, randseed=-1, max_iter=1000):
+    '''
+    Converting `data` to `bh_tsne` compatible format and saving in `workdir`
+    It is recommended to do PCA/TruncatedSVD first on `data`
+
+    Parameters:
+    ----------
+
+    data: array-like, numpy.array
+    workdir: str
+             working directory
+    no_dims: int, optional [default: 2]
+             target transformed dimension
+
+    '''
+
+    samples = data.astype(np.float64)
+    sample_count = samples.shape[0]
+    sample_dim = samples.shape[1]
+    with open(path_join(workdir, 'data.dat'), 'wb') as data_file:
+        # Write the bh_tsne header
+        data_file.write(pack('iiddii', sample_count, sample_dim, theta,
+                             perplexity, no_dims, max_iter))
+        # Then write the data
+        for sample in samples:
+            data_file.write(pack('{}d'.format(len(sample)), *sample))
+        # Write random seed if specified
+        if randseed != EMPTY_SEED:
+            data_file.write(pack('i', randseed))
+
+
+def do_bh_tsne(data, no_dims=2, perplexity=50, theta=0.5, randseed=-1,
+               verbose=False, max_iter=1000):
+    '''
+    Returns:
+    -------
+    t-SNE transformed data
+    '''
+    tmp_dir_path = mkdtemp()
+
+    child_pid = os.fork()
+    if child_pid == 0:
+        prepare_data(data, workdir=tmp_dir_path, no_dims=no_dims,
+                     perplexity=perplexity, theta=theta, randseed=randseed,
+                     max_iter=max_iter)
+        sys.exit(0)
+    else:
+        os.waitpid(child_pid, 0)
+        res = []
+        for result in bh_tsne(tmp_dir_path, verbose):
+            sample_res = []
+            for r in result:
+                sample_res.append(r)
+            res.append(sample_res)
+        rmtree(tmp_dir_path)
+        return np.asarray(res, dtype='float64')
+
+
 def main(args):
     argp = _argparse().parse_args(args[1:])
-    
+
     for result in run_bh_tsne(argp.input, no_dims=argp.no_dims, perplexity=argp.perplexity, theta=argp.theta, randseed=argp.randseed,
             verbose=argp.verbose, initial_dims=argp.initial_dims, use_pca=argp.use_pca, max_iter=argp.max_iter):
         fmt = ''
